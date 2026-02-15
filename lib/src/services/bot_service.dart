@@ -116,7 +116,6 @@ class BotService {
     }
   }
 
-  // 🔥 UPDATED: Search Command using Semantic Search
   Future<void> _handleSearchCommand(TeleDartMessage message) async {
     final query = message.text?.replaceFirst('/search ', '').trim() ?? '';
     if (query.isEmpty) {
