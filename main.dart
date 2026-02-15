@@ -23,7 +23,11 @@ Future<HttpServer> run(Handler handler, InternetAddress ip, int port) async {
   logger = Logger(
     printer: PrettyPrinter(methodCount: 0, errorMethodCount: 5),
   );
-  final env = DotEnv(includePlatformEnvironment: true)..load();
+  final env = DotEnv(includePlatformEnvironment: true);
+
+  if (File('.env').existsSync()) {
+    env.load();
+  }
 
   final botToken = env['BOT_TOKEN'];
   final secretKey = env['SECRET_KEY'];
