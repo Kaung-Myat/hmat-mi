@@ -1,16 +1,25 @@
 import 'dart:async';
 
 import 'package:teledart/model.dart';
-import 'package:teledart/teledart.dart' as teledart_pkg;
+import 'package:teledart/teledart.dart';
+import 'package:teledart/telegram.dart';
 
-class DartFrogWebhookFetcher extends teledart_pkg.Event {
-  DartFrogWebhookFetcher() : super('');
+class DartFrogWebhookFetcher extends LongPolling {
+  DartFrogWebhookFetcher({required Telegram telegram}) : super(telegram);
+
   final StreamController<Update> _controller = StreamController.broadcast();
 
-  Stream<Update> get onUpdate => _controller.stream;
+  @override
+  Stream<Update> onUpdate() {
+    return _controller.stream;
+  }
 
-  Future<void> start() async {}
+  @override
+  Future<void> start() async {
+    // Webhook မို့လို့ Polling ကို ပိတ်ထားတာ မှန်ပါတယ်
+  }
 
+  @override
   Future<void> stop() async {
     await _controller.close();
   }

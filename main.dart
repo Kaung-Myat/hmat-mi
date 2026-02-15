@@ -71,9 +71,13 @@ Future<HttpServer> run(Handler handler, InternetAddress ip, int port) async {
   final botUser = await telegram.getMe();
   final username = botUser.username!;
 
-  webhookFetcher = DartFrogWebhookFetcher();
+  webhookFetcher = DartFrogWebhookFetcher(telegram: telegram);
 
-  final teledart = TeleDart(botToken, webhookFetcher)..start();
+  final teledart = TeleDart(
+    botToken,
+    Event(username),
+    fetcher: webhookFetcher,
+  )..start();
 
   telegramRepo = TelegramRepository(teledart, botToken);
 
