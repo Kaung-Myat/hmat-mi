@@ -81,8 +81,8 @@ Future<HttpServer> run(Handler handler, InternetAddress ip, int port) async {
 
   telegramRepo = TelegramRepository(teledart, botToken);
 
-  const globeUrl = 'https://hmat-mi.globeapp.dev';
-  const webhookUrl = '$globeUrl/webhook';
+  final globeUrl = env['GLOBE_URL'] ?? 'https://hmat-mi.globeapp.dev';
+  final webhookUrl = '$globeUrl/webhook';
 
   await telegram.setWebhook(webhookUrl);
   logger
