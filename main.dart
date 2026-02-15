@@ -62,6 +62,7 @@ Future<HttpServer> run(Handler handler, InternetAddress ip, int port) async {
 
   noteRepo = NoteRepository(
     supabase: supabase,
+    geminiRepo: geminiRepo,
   );
   await noteRepo.init();
 

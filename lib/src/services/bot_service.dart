@@ -1,6 +1,7 @@
-import 'dart:async'; // Add this for Completer
+import 'dart:async';
 import 'dart:io';
-import 'package:hmat_mi/src/models/note_model.dart'; // Import NoteModel
+
+import 'package:hmat_mi/src/models/note_model.dart';
 import 'package:hmat_mi/src/models/user_model.dart';
 import 'package:hmat_mi/src/repositories/gemini_repository.dart';
 import 'package:hmat_mi/src/repositories/note_repository.dart';
@@ -31,6 +32,7 @@ class BotService {
   final NoteRepository noteRepo;
   final GeminiRepository geminiRepo;
 
+  // Topic creation lock to prevent duplicate creation
   final Map<String, Future<int?>> _topicCreationLocks = {};
 
   void start() {
@@ -42,6 +44,7 @@ class BotService {
     logger.i('🤖 Bot Service Started and Listening...');
   }
 
+  // ... (Connect & Start Commands remain the same) ...
   Future<void> _handleConnectCommand(TeleDartMessage message) async {
     if (message.chat.type == 'private') {
       await message
@@ -99,7 +102,8 @@ class BotService {
 
   Future<void> _handleApiKeySetup(int userId, TeleDartMessage message) async {
     final text = message.text?.trim() ?? '';
-    if (text.startsWith('AIza') && text.length > 20) {
+    // Basic validation for API Key
+    if (text.length > 20) {
       try {
         await userRepo.saveApiKey(userId, text);
         await message.reply(
@@ -108,10 +112,11 @@ class BotService {
         await message.reply('❌ Error: $e');
       }
     } else {
-      await message.reply('⚠️ Invalid API Key format. Must start with "AIza".');
+      await message.reply('⚠️ Invalid API Key format.');
     }
   }
 
+  // 🔥 UPDATED: Search Command using Semantic Search
   Future<void> _handleSearchCommand(TeleDartMessage message) async {
     final query = message.text?.replaceFirst('/search ', '').trim() ?? '';
     if (query.isEmpty) {
@@ -120,7 +125,20 @@ class BotService {
       return;
     }
 
-    final results = await noteRepo.search(query);
+    final userId = message.chat.id;
+    final apiKey = await userRepo.getDecryptedApiKey(userId);
+
+    if (apiKey == null) {
+      await message.reply('❌ API Key မရှိပါ။ ကျေးဇူးပြု၍ ပြန်လည်ထည့်သွင်းပါ။');
+      return;
+    }
+
+    // 🔍 Calling Semantic Search with API Key
+    final results = await noteRepo.search(
+      query: query,
+      apiKey: apiKey,
+      userId: userId.toString(), // Passing User ID for filtering
+    );
 
     if (results.isEmpty) {
       await message.reply('❌ "$query" နဲ့ပတ်သက်ပြီး ဘာမှ မမှတ်ထားပါဘူး။');
@@ -131,7 +149,8 @@ class BotService {
         final icon = _getIcon(note.type);
         // ignore: use_string_buffers
         response +=
-            '$icon [${note.topic}] ${note.content.length > 30 ? "${note.content.substring(0, 30)}..." : note.content}\n🔗 ${note.messageLink}\n\n';
+            // ignore: use_string_buffers
+            '$icon [${note.topic}] ${note.content.length > 50 ? "${note.content.substring(0, 50)}..." : note.content}\n🔗 ${note.messageLink}\n\n';
       }
 
       await message.reply(response, parseMode: 'Markdown');
@@ -144,6 +163,7 @@ class BotService {
     return '📝';
   }
 
+  // 🔥 UPDATED: Note Taking with Embedding Indexing
   Future<void> _handleNoteTaking(
     UserModel user,
     TeleDartMessage message,
@@ -151,6 +171,13 @@ class BotService {
     final vaultId = user.vaultChannelId!;
     final targetTopic = _determineTopic(message);
     final topicId = await _getSafeTopicId(user, targetTopic, vaultId);
+
+    // Get API Key early for indexing
+    final apiKey = await userRepo.getDecryptedApiKey(user.id);
+    if (apiKey == null) {
+      await telegramRepo.sendMessage(user.id, '❌ API Key Error. Please reset.');
+      return;
+    }
 
     try {
       if (topicId != null) {
@@ -174,11 +201,19 @@ class BotService {
           createdAt: DateTime.now(),
           messageLink: messageLink,
         );
-        await noteRepo.indexNote(note);
-        logger.i('✅ Note indexed: ${note.messageId}');
+
+        // 2. Index Note (with Vector Embedding)
+        await noteRepo.indexNote(
+          note: note,
+          apiKey: apiKey,
+          userId: user.id.toString(),
+        );
+
+        logger.i('✅ Note indexed with embedding: ${note.messageId}');
+
+        // 3. Process OCR if image
         if (message.photo != null && message.photo!.isNotEmpty) {
-          // Run in background (don't await to keep bot fast)
-          _processOCR(user, forwardedMsg, message.photo!.last, note);
+          await _processOCR(user, forwardedMsg, message.photo!.last, note);
         }
       } else {
         await telegramRepo.forwardToGeneral(
@@ -188,43 +223,50 @@ class BotService {
 
       await telegramRepo.sendMessage(user.id, '✅ Saved');
     } catch (e) {
+      // Error Handling (Topic deleted, etc.) - Simplified for brevity but kept logic
       if (e.toString().contains('message thread not found') ||
           e.toString().contains('Bad Request')) {
-        logger.w('⚠️ Topic deleted manually! Re-creating: $targetTopic');
-
-        final cleanTopics = Map<String, int>.from(user.topicIds)
-          ..remove(targetTopic);
-        // ignore: parameter_assignments
-        user = user.copyWith(topicIds: cleanTopics);
-        await userRepo.saveUser(user);
-
-        final newTopicId =
-            await _createAndSaveTopic(user, targetTopic, vaultId);
-        if (newTopicId != null) {
-          // Retry forwarding
-          final forwardedMsg = await telegramRepo.forwardToTopic(
-              vaultId, user.id, message.messageId, newTopicId);
-
-          // Retry Indexing
-          final linkId = vaultId.toString().replaceAll('-100', '');
-          final messageLink =
-              'https://t.me/c/$linkId/${forwardedMsg.messageId}';
-
-          final note = NoteModel(
-            messageId: forwardedMsg.messageId,
-            content: message.caption ?? message.text ?? 'Media File',
-            topic: targetTopic,
-            type: message.photo != null ? 'image' : 'text',
-            createdAt: DateTime.now(),
-            messageLink: messageLink,
-          );
-          await noteRepo.indexNote(note);
-
-          logger.i('♻️ Recovered and saved to new topic');
-        }
+        await _handleTopicRecovery(user, message, targetTopic, vaultId, apiKey);
       } else {
         logger.e('Failed to forward', error: e);
       }
+    }
+  }
+
+  // Logic to recover deleted topics
+  Future<void> _handleTopicRecovery(UserModel user, TeleDartMessage message,
+      String targetTopic, int vaultId, String apiKey) async {
+    logger.w('⚠️ Topic deleted manually! Re-creating: $targetTopic');
+
+    final cleanTopics = Map<String, int>.from(user.topicIds)
+      ..remove(targetTopic);
+    user = user.copyWith(topicIds: cleanTopics);
+    await userRepo.saveUser(user);
+
+    final newTopicId = await _createAndSaveTopic(user, targetTopic, vaultId);
+    if (newTopicId != null) {
+      final forwardedMsg = await telegramRepo.forwardToTopic(
+          vaultId, user.id, message.messageId, newTopicId);
+
+      final linkId = vaultId.toString().replaceAll('-100', '');
+      final messageLink = 'https://t.me/c/$linkId/${forwardedMsg.messageId}';
+
+      final note = NoteModel(
+        messageId: forwardedMsg.messageId,
+        content: message.caption ?? message.text ?? 'Media File',
+        topic: targetTopic,
+        type: message.photo != null ? 'image' : 'text',
+        createdAt: DateTime.now(),
+        messageLink: messageLink,
+      );
+
+      await noteRepo.indexNote(
+        note: note,
+        apiKey: apiKey,
+        userId: user.id.toString(),
+      );
+
+      logger.i('♻️ Recovered and saved to new topic');
     }
   }
 
@@ -240,19 +282,16 @@ class BotService {
 
       logger.d('🖼️ Downloading image for OCR...');
 
-      // Get File Path from Telegram
       final file = await teledart.getFile(photo.fileId);
       final filePath = file.filePath;
       if (filePath == null) return;
 
-      // Download Image Bytes
       final downloadUrl =
           'https://api.telegram.org/file/bot$botToken/$filePath';
       final request = await HttpClient().getUrl(Uri.parse(downloadUrl));
       final response = await request.close();
       final imageBytes = await response.expand((element) => element).toList();
 
-      // Send to Gemini
       logger.d('🤖 Gemini analyzing text...');
       final extractedText = await geminiRepo.extractTextFromImage(
           apiKey: apiKey, imageBytes: imageBytes);
@@ -268,12 +307,18 @@ class BotService {
           createdAt: note.createdAt,
           messageLink: note.messageLink,
         );
-        await noteRepo.indexNote(updatedNote);
-        logger.i('✅ OCR Text indexed for Search');
+
+        // Re-index with new content (This updates the vector too)
+        await noteRepo.indexNote(
+          note: updatedNote,
+          apiKey: apiKey,
+          userId: user.id.toString(),
+        );
+
+        logger.i('✅ OCR Text indexed and Embedding Updated');
 
         try {
           final replyText = '📝 **OCR Detected:**\n$extractedText';
-
           await telegramRepo.sendMessage(
             forwardedMsg.chat.id,
             replyText,
@@ -288,6 +333,7 @@ class BotService {
     }
   }
 
+  // ... (Topic Management Helpers remain the same) ...
   Future<int?> _getSafeTopicId(
       UserModel user, String topicName, int vaultId) async {
     if (user.topicIds.containsKey(topicName)) {
@@ -295,18 +341,19 @@ class BotService {
     }
 
     if (_topicCreationLocks.containsKey(topicName)) {
-      logger.d('⏳ Waiting for topic creation: $topicName');
       return await _topicCreationLocks[topicName];
     }
 
-    logger.i('📂 Starting topic creation: $topicName');
-
-    final completer = _createAndSaveTopic(user, topicName, vaultId);
-    _topicCreationLocks[topicName] = completer;
+    final completer = Completer<int?>();
+    _topicCreationLocks[topicName] = completer.future;
 
     try {
-      final resultId = await completer;
-      return resultId;
+      final topicId = await _createAndSaveTopic(user, topicName, vaultId);
+      completer.complete(topicId);
+      return topicId;
+    } catch (e) {
+      completer.complete(null);
+      return null;
     } finally {
       _topicCreationLocks.remove(topicName);
     }
@@ -314,6 +361,7 @@ class BotService {
 
   Future<int?> _createAndSaveTopic(
       UserModel user, String topicName, int vaultId) async {
+    // Check fresh user data again to avoid race conditions
     final freshUser = await userRepo.getUser(user.id);
     if (freshUser != null && freshUser.topicIds.containsKey(topicName)) {
       return freshUser.topicIds[topicName];
@@ -328,22 +376,17 @@ class BotService {
         newTopics[topicName] = topicId;
 
         await userRepo.saveUser(currentUser.copyWith(topicIds: newTopics));
-        logger.i('✅ Topic created and saved: $topicName -> $topicId');
       }
       return topicId;
     }
-
     return null;
   }
 
   String _determineTopic(TeleDartMessage message) {
     final text = message.caption ?? message.text ?? '';
-
     final hashtagRegex = RegExp(r'#(\w+)');
     final match = hashtagRegex.firstMatch(text);
-    if (match != null) {
-      return match.group(1)!;
-    }
+    if (match != null) return match.group(1)!;
 
     if (message.video != null) return 'Videos';
     if (message.photo != null) return 'Images';
@@ -356,7 +399,6 @@ class BotService {
       }
       return 'Links';
     }
-
     return 'General';
   }
 }

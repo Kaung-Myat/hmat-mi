@@ -1,6 +1,8 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:google_generative_ai/google_generative_ai.dart';
+
 class GeminiRepository {
   Future<String?> extractTextFromImage({
     required String apiKey,
@@ -53,5 +55,20 @@ class GeminiRepository {
       print('❌ Gemini OCR Error: $e');
       return null;
     }
+  }
+
+  Future<List<double>> generateEmbedding({
+    required String text,
+    required String apiKey,
+  }) async {
+    final model = GenerativeModel(
+      model: 'text-embedding-004', // Embedding Model
+      apiKey: apiKey,
+    );
+
+    final content = Content.text(text);
+    final result = await model.embedContent(content);
+
+    return result.embedding.values;
   }
 }
