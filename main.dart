@@ -54,6 +54,8 @@ Future<HttpServer> run(Handler handler, InternetAddress ip, int port) async {
   logger.i('🚀 Initializing Hmat-Mi Bot...');
 
   supabase = SupabaseClient(supabaseUrl, supabaseKey);
+  geminiRepo = GeminiRepository();
+
   userRepo = UserRepository(
     secretKey: secretKey,
     supabase: supabase,
@@ -65,8 +67,6 @@ Future<HttpServer> run(Handler handler, InternetAddress ip, int port) async {
     geminiRepo: geminiRepo,
   );
   await noteRepo.init();
-
-  geminiRepo = GeminiRepository();
 
   final telegram = Telegram(botToken);
   final botUser = await telegram.getMe();
