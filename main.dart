@@ -7,6 +7,7 @@ import 'package:hmat_mi/src/repositories/note_repository.dart';
 import 'package:hmat_mi/src/repositories/telegram_repository.dart';
 import 'package:hmat_mi/src/repositories/user_repository.dart';
 import 'package:hmat_mi/src/services/bot_service.dart';
+import 'package:hmat_mi/src/services/webhook_fetcher.dart';
 import 'package:logger/logger.dart';
 import 'package:supabase/supabase.dart';
 import 'package:teledart/teledart.dart';
@@ -18,6 +19,8 @@ late final NoteRepository noteRepo;
 late final GeminiRepository geminiRepo;
 late final SupabaseClient supabase;
 late final Logger logger;
+
+late final DartFrogWebhookFetcher webhookFetcher;
 
 Future<HttpServer> run(Handler handler, InternetAddress ip, int port) async {
   logger = Logger(
@@ -68,11 +71,19 @@ Future<HttpServer> run(Handler handler, InternetAddress ip, int port) async {
   final botUser = await telegram.getMe();
   final username = botUser.username!;
 
-  final teledart = TeleDart(botToken, Event(username))..start();
+  webhookFetcher = DartFrogWebhookFetcher();
+
+  final teledart = TeleDart(botToken, webhookFetcher)..start();
 
   telegramRepo = TelegramRepository(teledart, botToken);
 
-  logger.d('✅ Database & Telegram initialized');
+  const globeUrl = 'https://hmat-mi.globeapp.dev';
+  const webhookUrl = '$globeUrl/webhook';
+
+  await telegram.setWebhook(webhookUrl);
+  logger
+    ..i('🔗 Webhook set to: $webhookUrl')
+    ..d('✅ Database & Telegram initialized');
 
   BotService(
     telegramRepo: telegramRepo,
