@@ -162,7 +162,6 @@ class BotService {
     return '📝';
   }
 
-  // 🔥 UPDATED: Note Taking with Embedding Indexing
   Future<void> _handleNoteTaking(
     UserModel user,
     TeleDartMessage message,
