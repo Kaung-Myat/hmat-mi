@@ -62,7 +62,7 @@ class GeminiRepository {
     required String apiKey,
   }) async {
     final model = GenerativeModel(
-      model: 'embedding-001', // Embedding Model
+      model: 'text-embedding-004', // Embedding Model
       apiKey: apiKey,
     );
 
